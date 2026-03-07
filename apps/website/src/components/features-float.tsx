@@ -64,11 +64,11 @@ export function FeaturesFloat() {
         offset: ["start 0.8", "end 0.3"],
     })
 
-    const leftY  = useTransform(scrollYProgress, [0, 1], [60, -60])
-    const rightY = useTransform(scrollYProgress, [0, 1], [-60, 60])
+    const leftY  = useTransform(scrollYProgress, [0, 1], [0, -80])
+    const rightY = useTransform(scrollYProgress, [0, 1], [0,  80])
 
     return (
-        <section ref={ref} className="relative w-full px-4 py-16 md:py-24 overflow-hidden">
+        <section ref={ref} className="relative w-full px-4 pt-16 pb-20 md:pt-20 md:pb-28 overflow-hidden">
             <div className="max-w-7xl mx-auto flex items-center justify-between gap-8">
 
                 {/* Left pills */}
