@@ -140,7 +140,7 @@ function Card({ project }: { project: typeof projects[0] }) {
 }
 
 const STEP_H = 68          // px — tall steps like Stacks
-const BG = "hsl(0,0%,85%)"
+const BG = "#ffffff"
 const R = 22          // px — clearly visible rounded inner corners
 
 // widths decrease dramatically: 48% → 34% → 21% → 9%
