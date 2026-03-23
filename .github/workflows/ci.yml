@@ -95,3 +95,34 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+  api:
+    name: API (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+  contracts:
+    name: Contracts (Rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/contracts
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Test contracts
+        run: cargo test -p yield-registry -p allocation-strategy

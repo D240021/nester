@@ -1,0 +1,155 @@
+package service
+
+import (
+	"context"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
+
+	"github.com/suncrestlabs/nester/apps/api/internal/domain/vault"
+)
+
+func TestVaultServiceRecordDepositAndUpdateAllocations(t *testing.T) {
+	userID := uuid.New()
+	repository := newMemoryVaultRepository(userID)
+	service := NewVaultService(repository)
+
+	created, err := service.CreateVault(context.Background(), CreateVaultInput{
+		UserID:          userID,
+		ContractAddress: "CA123",
+		Currency:        "usdc",
+	})
+	if err != nil {
+		t.Fatalf("CreateVault() error = %v", err)
+	}
+
+	updated, err := service.RecordDeposit(context.Background(), RecordDepositInput{
+		VaultID: created.ID,
+		Amount:  decimal.RequireFromString("125.50"),
+	})
+	if err != nil {
+		t.Fatalf("RecordDeposit() error = %v", err)
+	}
+
+	if !updated.TotalDeposited.Equal(decimal.RequireFromString("125.50")) {
+		t.Fatalf("expected deposited amount 125.50, got %s", updated.TotalDeposited)
+	}
+	if !updated.CurrentBalance.Equal(decimal.RequireFromString("125.50")) {
+		t.Fatalf("expected current balance 125.50, got %s", updated.CurrentBalance)
+	}
+
+	updated, err = service.UpdateAllocations(context.Background(), UpdateAllocationsInput{
+		VaultID: created.ID,
+		Allocations: []vault.Allocation{
+			{Protocol: "AAVE", Amount: decimal.RequireFromString("50"), APY: decimal.RequireFromString("4.5")},
+			{Protocol: "Blend", Amount: decimal.RequireFromString("75.5"), APY: decimal.RequireFromString("6.2")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateAllocations() error = %v", err)
+	}
+
+	if len(updated.Allocations) != 2 {
+		t.Fatalf("expected 2 allocations, got %d", len(updated.Allocations))
+	}
+
+	protocols := []string{updated.Allocations[0].Protocol, updated.Allocations[1].Protocol}
+	slices.Sort(protocols)
+	if !slices.Equal(protocols, []string{"aave", "blend"}) {
+		t.Fatalf("expected normalized protocols, got %v", protocols)
+	}
+}
+
+func TestVaultServiceCreateVaultReturnsUserNotFound(t *testing.T) {
+	service := NewVaultService(newMemoryVaultRepository())
+
+	_, err := service.CreateVault(context.Background(), CreateVaultInput{
+		UserID:          uuid.New(),
+		ContractAddress: "CA123",
+		Currency:        "USDC",
+	})
+	if err != vault.ErrUserNotFound {
+		t.Fatalf("expected ErrUserNotFound, got %v", err)
+	}
+}
+
+type memoryVaultRepository struct {
+	users  map[uuid.UUID]struct{}
+	vaults map[uuid.UUID]vault.Vault
+}
+
+func newMemoryVaultRepository(userIDs ...uuid.UUID) *memoryVaultRepository {
+	users := make(map[uuid.UUID]struct{}, len(userIDs))
+	for _, userID := range userIDs {
+		users[userID] = struct{}{}
+	}
+
+	return &memoryVaultRepository{
+		users:  users,
+		vaults: make(map[uuid.UUID]vault.Vault),
+	}
+}
+
+func (r *memoryVaultRepository) CreateVault(_ context.Context, model vault.Vault) (vault.Vault, error) {
+	if _, ok := r.users[model.UserID]; !ok {
+		return vault.Vault{}, vault.ErrUserNotFound
+	}
+
+	now := time.Now().UTC()
+	model.CreatedAt = now
+	model.UpdatedAt = now
+	model.Allocations = []vault.Allocation{}
+	r.vaults[model.ID] = cloneVault(model)
+	return cloneVault(model), nil
+}
+
+func (r *memoryVaultRepository) GetVault(_ context.Context, id uuid.UUID) (vault.Vault, error) {
+	model, ok := r.vaults[id]
+	if !ok {
+		return vault.Vault{}, vault.ErrVaultNotFound
+	}
+	return cloneVault(model), nil
+}
+
+func (r *memoryVaultRepository) GetUserVaults(_ context.Context, userID uuid.UUID) ([]vault.Vault, error) {
+	models := make([]vault.Vault, 0)
+	for _, model := range r.vaults {
+		if model.UserID == userID {
+			models = append(models, cloneVault(model))
+		}
+	}
+	return models, nil
+}
+
+func (r *memoryVaultRepository) UpdateVaultBalances(_ context.Context, id uuid.UUID, totalDeposited decimal.Decimal, currentBalance decimal.Decimal) error {
+	model, ok := r.vaults[id]
+	if !ok {
+		return vault.ErrVaultNotFound
+	}
+
+	model.TotalDeposited = totalDeposited
+	model.CurrentBalance = currentBalance
+	model.UpdatedAt = time.Now().UTC()
+	r.vaults[id] = cloneVault(model)
+	return nil
+}
+
+func (r *memoryVaultRepository) ReplaceAllocations(_ context.Context, vaultID uuid.UUID, allocations []vault.Allocation) error {
+	model, ok := r.vaults[vaultID]
+	if !ok {
+		return vault.ErrVaultNotFound
+	}
+
+	model.Allocations = append([]vault.Allocation(nil), allocations...)
+	model.UpdatedAt = time.Now().UTC()
+	r.vaults[vaultID] = cloneVault(model)
+	return nil
+}
+
+func cloneVault(model vault.Vault) vault.Vault {
+	model.Allocations = append([]vault.Allocation(nil), model.Allocations...)
+	return model
+}
