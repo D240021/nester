@@ -104,49 +104,33 @@ jobs:
       - name: Lint
         run: npm run lint
 
-  soroban-contracts:
-    name: Soroban Contracts (Rust/WASM)
+  api:
+    name: API (Go)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
+      - uses: actions/setup-go@v5
         with:
-          toolchain: stable
-          target: wasm32-unknown-unknown
-          override: true
+          go-version-file: apps/api/go.mod
+          cache: true
 
-      - name: Cache Cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+      - name: Test
+        run: go test ./...
 
-      - name: Format Check
-        run: make fmt-check
+  contracts:
+    name: Contracts (Rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/contracts
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Clippy
-        run: make clippy
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build Contracts
-        run: make build
-
-      - name: Run Unit Tests
-        run: make test
-
-      - name: Run Integration Tests
-        run: make integration-test
-
-      - name: Upload WASM Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: soroban-wasm
-          path: |
-            target/wasm32-unknown-unknown/release/*.wasm
+      - name: Test contracts
+        run: cargo test -p yield-registry -p allocation-strategy

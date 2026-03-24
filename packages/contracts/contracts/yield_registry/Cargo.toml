@@ -1,11 +1,11 @@
 [package]
-name = "nester"
+name = "yield-registry"
 version = "0.0.0"
 edition = "2021"
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 doctest = false
 
 [dependencies]

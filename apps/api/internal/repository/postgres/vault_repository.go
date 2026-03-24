@@ -1,0 +1,366 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/shopspring/decimal"
+
+	"github.com/suncrestlabs/nester/apps/api/internal/domain/vault"
+)
+
+type VaultRepository struct {
+	db *sql.DB
+}
+
+func NewVaultRepository(db *sql.DB) *VaultRepository {
+	return &VaultRepository{db: db}
+}
+
+func (r *VaultRepository) CreateVault(ctx context.Context, model vault.Vault) (vault.Vault, error) {
+	query := `
+		INSERT INTO vaults (
+			id, user_id, contract_address, total_deposited, current_balance, currency, status
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING created_at, updated_at
+	`
+
+	if err := r.db.QueryRowContext(
+		ctx,
+		query,
+		model.ID.String(),
+		model.UserID.String(),
+		model.ContractAddress,
+		model.TotalDeposited.String(),
+		model.CurrentBalance.String(),
+		model.Currency,
+		string(model.Status),
+	).Scan(&model.CreatedAt, &model.UpdatedAt); err != nil {
+		return vault.Vault{}, mapRepositoryError(err)
+	}
+
+	return model, nil
+}
+
+func (r *VaultRepository) GetVault(ctx context.Context, id uuid.UUID) (vault.Vault, error) {
+	query := `
+		SELECT id, user_id, contract_address, total_deposited, current_balance, currency, status, created_at, updated_at
+		FROM vaults
+		WHERE id = $1
+	`
+
+	model, err := scanVault(r.db.QueryRowContext(ctx, query, id.String()))
+	if err != nil {
+		return vault.Vault{}, mapRepositoryError(err)
+	}
+
+	allocations, err := loadAllocations(ctx, r.db, id)
+	if err != nil {
+		return vault.Vault{}, err
+	}
+
+	model.Allocations = allocations
+	return model, nil
+}
+
+func (r *VaultRepository) GetUserVaults(ctx context.Context, userID uuid.UUID) ([]vault.Vault, error) {
+	query := `
+		SELECT id, user_id, contract_address, total_deposited, current_balance, currency, status, created_at, updated_at
+		FROM vaults
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, userID.String())
+	if err != nil {
+		return nil, mapRepositoryError(err)
+	}
+	defer rows.Close()
+
+	vaults := make([]vault.Vault, 0)
+	for rows.Next() {
+		model, err := scanVault(rows)
+		if err != nil {
+			return nil, err
+		}
+
+		allocations, err := loadAllocations(ctx, r.db, model.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		model.Allocations = allocations
+		vaults = append(vaults, model)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return vaults, nil
+}
+
+func (r *VaultRepository) UpdateVaultBalances(ctx context.Context, id uuid.UUID, totalDeposited decimal.Decimal, currentBalance decimal.Decimal) error {
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE vaults SET total_deposited = $2, current_balance = $3, updated_at = NOW() WHERE id = $1`,
+		id.String(),
+		totalDeposited.String(),
+		currentBalance.String(),
+	)
+	if err != nil {
+		return mapRepositoryError(err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return vault.ErrVaultNotFound
+	}
+
+	return nil
+}
+
+func (r *VaultRepository) RecordDeposit(ctx context.Context, id uuid.UUID, amount decimal.Decimal) error {
+	if amount.Cmp(decimal.Zero) <= 0 {
+		return vault.ErrInvalidAmount
+	}
+
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE vaults
+		 SET total_deposited = total_deposited + $2::numeric,
+		     current_balance = current_balance + $2::numeric,
+		     updated_at = NOW()
+		 WHERE id = $1`,
+		id.String(),
+		amount.String(),
+	)
+	if err != nil {
+		return mapRepositoryError(err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return vault.ErrVaultNotFound
+	}
+
+	return nil
+}
+
+func (r *VaultRepository) ReplaceAllocations(ctx context.Context, vaultID uuid.UUID, allocations []vault.Allocation) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	if err := ensureVaultExists(ctx, tx, vaultID); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM allocations WHERE vault_id = $1`, vaultID.String()); err != nil {
+		return mapRepositoryError(err)
+	}
+
+	for _, allocation := range allocations {
+		if _, err := tx.ExecContext(
+			ctx,
+			`INSERT INTO allocations (id, vault_id, protocol, amount, apy, allocated_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+			allocation.ID.String(),
+			vaultID.String(),
+			allocation.Protocol,
+			allocation.Amount.String(),
+			allocation.APY.String(),
+			allocation.AllocatedAt.UTC(),
+		); err != nil {
+			return mapRepositoryError(err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE vaults SET updated_at = NOW() WHERE id = $1`, vaultID.String()); err != nil {
+		return mapRepositoryError(err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func scanVault(row scanner) (vault.Vault, error) {
+	var (
+		id              string
+		userID          string
+		totalDeposited  string
+		currentBalance  string
+		contractAddress string
+		currency        string
+		status          string
+		createdAt       time.Time
+		updatedAt       time.Time
+	)
+
+	if err := row.Scan(
+		&id,
+		&userID,
+		&contractAddress,
+		&totalDeposited,
+		&currentBalance,
+		&currency,
+		&status,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return vault.Vault{}, vault.ErrVaultNotFound
+		}
+		return vault.Vault{}, err
+	}
+
+	parsedID, err := uuid.Parse(id)
+	if err != nil {
+		return vault.Vault{}, fmt.Errorf("parse vault id: %w", err)
+	}
+
+	parsedUserID, err := uuid.Parse(userID)
+	if err != nil {
+		return vault.Vault{}, fmt.Errorf("parse user id: %w", err)
+	}
+
+	parsedDeposited, err := decimal.NewFromString(totalDeposited)
+	if err != nil {
+		return vault.Vault{}, fmt.Errorf("parse total deposited: %w", err)
+	}
+
+	parsedBalance, err := decimal.NewFromString(currentBalance)
+	if err != nil {
+		return vault.Vault{}, fmt.Errorf("parse current balance: %w", err)
+	}
+
+	return vault.Vault{
+		ID:              parsedID,
+		UserID:          parsedUserID,
+		ContractAddress: contractAddress,
+		TotalDeposited:  parsedDeposited,
+		CurrentBalance:  parsedBalance,
+		Currency:        currency,
+		Status:          vault.VaultStatus(status),
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
+	}, nil
+}
+
+func loadAllocations(ctx context.Context, db queryer, vaultID uuid.UUID) ([]vault.Allocation, error) {
+	rows, err := db.QueryContext(
+		ctx,
+		`SELECT id, vault_id, protocol, amount, apy, allocated_at FROM allocations WHERE vault_id = $1 ORDER BY allocated_at DESC`,
+		vaultID.String(),
+	)
+	if err != nil {
+		return nil, mapRepositoryError(err)
+	}
+	defer rows.Close()
+
+	allocations := make([]vault.Allocation, 0)
+	for rows.Next() {
+		var (
+			id          string
+			parsedVault string
+			protocol    string
+			amount      string
+			apy         string
+			allocatedAt time.Time
+		)
+
+		if err := rows.Scan(&id, &parsedVault, &protocol, &amount, &apy, &allocatedAt); err != nil {
+			return nil, err
+		}
+
+		allocationID, err := uuid.Parse(id)
+		if err != nil {
+			return nil, fmt.Errorf("parse allocation id: %w", err)
+		}
+
+		vaultUUID, err := uuid.Parse(parsedVault)
+		if err != nil {
+			return nil, fmt.Errorf("parse allocation vault id: %w", err)
+		}
+
+		parsedAmount, err := decimal.NewFromString(amount)
+		if err != nil {
+			return nil, fmt.Errorf("parse allocation amount: %w", err)
+		}
+
+		parsedAPY, err := decimal.NewFromString(apy)
+		if err != nil {
+			return nil, fmt.Errorf("parse allocation apy: %w", err)
+		}
+
+		allocations = append(allocations, vault.Allocation{
+			ID:          allocationID,
+			VaultID:     vaultUUID,
+			Protocol:    protocol,
+			Amount:      parsedAmount,
+			APY:         parsedAPY,
+			AllocatedAt: allocatedAt,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return allocations, nil
+}
+
+func ensureVaultExists(ctx context.Context, tx *sql.Tx, vaultID uuid.UUID) error {
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT TRUE FROM vaults WHERE id = $1`, vaultID.String()).Scan(&exists); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return vault.ErrVaultNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+func mapRepositoryError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "23503" && strings.Contains(pgErr.ConstraintName, "user") {
+			return vault.ErrUserNotFound
+		}
+		if pgErr.Code == "23503" && strings.Contains(pgErr.ConstraintName, "vault") {
+			return vault.ErrVaultNotFound
+		}
+	}
+
+	return err
+}

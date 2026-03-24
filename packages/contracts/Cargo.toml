@@ -1,7 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-  "contracts/*",
+  "contracts/allocation_strategy",
+  "contracts/nester",
+  "contracts/yield_registry",
 ]
 
 [workspace.dependencies]
