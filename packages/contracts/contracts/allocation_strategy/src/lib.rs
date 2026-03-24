@@ -4,7 +4,7 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, symbol_short, Address, Env, Symbol, Vec,
 };
 
-use nester_access_control::{self as ac, Role};
+use nester_access_control::{AccessControl, Role};
 use nester_common::{ContractError, BASIS_POINT_SCALE};
 use yield_registry::{SourceStatus, YieldRegistryContractClient};
 
@@ -45,7 +45,7 @@ impl AllocationStrategyContract {
     /// Initialise the strategy, granting `admin` the Admin role and recording
     /// the address of the yield registry.
     pub fn initialize(env: Env, admin: Address, registry_id: Address) {
-        ac::initialize(&env, &admin);
+        AccessControl::initialize(&env, &admin);
         env.storage()
             .instance()
             .set(&DataKey::RegistryId, &registry_id);
@@ -170,22 +170,22 @@ impl AllocationStrategyContract {
 
     /// Grant `role` to `grantee`. Caller must be an Admin.
     pub fn grant_role(env: Env, grantor: Address, grantee: Address, role: Role) {
-        ac::grant_role(&env, &grantor, &grantee, role);
+        AccessControl::grant_role(&env, &grantor, &grantee, role);
     }
 
     /// Revoke `role` from `target`. Caller must be an Admin.
     pub fn revoke_role(env: Env, revoker: Address, target: Address, role: Role) {
-        ac::revoke_role(&env, &revoker, &target, role);
+        AccessControl::revoke_role(&env, &revoker, &target, role);
     }
 
     /// Propose an admin transfer (step 1). Caller must be an Admin.
     pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) {
-        ac::transfer_admin(&env, &current_admin, &new_admin);
+        AccessControl::transfer_admin(&env, &current_admin, &new_admin);
     }
 
     /// Accept a pending admin transfer (step 2). Caller must be the proposed new admin.
     pub fn accept_admin(env: Env, new_admin: Address) {
-        ac::accept_admin(&env, &new_admin);
+        AccessControl::accept_admin(&env, &new_admin);
     }
 }
 
@@ -196,7 +196,9 @@ impl AllocationStrategyContract {
 /// Panic with [`ContractError::Unauthorized`] unless `account` holds Admin or
 /// Operator.  Day-to-day operations (e.g. weight updates) are open to both.
 fn require_admin_or_operator(env: &Env, account: &Address) {
-    if !ac::has_role(env, account, Role::Admin) && !ac::has_role(env, account, Role::Operator) {
+    if !AccessControl::has_role(env, account, Role::Admin)
+        && !AccessControl::has_role(env, account, Role::Operator)
+    {
         panic_with_error!(env, ContractError::Unauthorized);
     }
 }

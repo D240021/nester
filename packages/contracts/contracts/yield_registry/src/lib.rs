@@ -2,7 +2,7 @@
 
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol};
 
-use nester_access_control::{self as ac, Role};
+use nester_access_control::{AccessControl, Role};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -33,7 +33,7 @@ pub struct YieldRegistryContract;
 impl YieldRegistryContract {
     /// Initialise the registry, granting `admin` the Admin role.
     pub fn initialize(env: Env, admin: Address) {
-        ac::initialize(&env, &admin);
+        AccessControl::initialize(&env, &admin);
     }
 
     // -----------------------------------------------------------------------
@@ -45,7 +45,7 @@ impl YieldRegistryContract {
     /// Requires caller to hold [`Role::Admin`].
     pub fn upsert_source(env: Env, caller: Address, source_id: Symbol, status: SourceStatus) {
         caller.require_auth();
-        ac::require_role(&env, &caller, Role::Admin);
+        AccessControl::require_role(&env, &caller, Role::Admin);
 
         env.storage()
             .instance()
@@ -78,22 +78,22 @@ impl YieldRegistryContract {
 
     /// Grant `role` to `grantee`. Caller must be an Admin.
     pub fn grant_role(env: Env, grantor: Address, grantee: Address, role: Role) {
-        ac::grant_role(&env, &grantor, &grantee, role);
+        AccessControl::grant_role(&env, &grantor, &grantee, role);
     }
 
     /// Revoke `role` from `target`. Caller must be an Admin.
     pub fn revoke_role(env: Env, revoker: Address, target: Address, role: Role) {
-        ac::revoke_role(&env, &revoker, &target, role);
+        AccessControl::revoke_role(&env, &revoker, &target, role);
     }
 
     /// Propose an admin transfer (step 1). Caller must be an Admin.
     pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) {
-        ac::transfer_admin(&env, &current_admin, &new_admin);
+        AccessControl::transfer_admin(&env, &current_admin, &new_admin);
     }
 
     /// Accept a pending admin transfer (step 2). Caller must be the proposed new admin.
     pub fn accept_admin(env: Env, new_admin: Address) {
-        ac::accept_admin(&env, &new_admin);
+        AccessControl::accept_admin(&env, &new_admin);
     }
 }
 

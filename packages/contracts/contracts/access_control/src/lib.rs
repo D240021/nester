@@ -12,16 +12,15 @@
 //!   change role assignments.
 //!
 //! # Admin transfer (two-step)
-//! 1. Current admin calls [`transfer_admin`] — stores a pending proposal.
-//! 2. Proposed new admin calls [`accept_admin`] — atomically grants them Admin
-//!    and revokes the previous admin, then clears the proposal.
+//! 1. Current admin calls [`AccessControl::transfer_admin`] — stores a pending proposal.
+//! 2. Proposed new admin calls [`AccessControl::accept_admin`] — atomically grants them
+//!    Admin and revokes the previous admin, then clears the proposal.
 //!
 //! This prevents accidental admin loss from mis-typed addresses.
 //!
 //! # Last-admin protection
-//! [`revoke_role`] will panic with [`ContractError::InvalidOperation`] if the
-//! caller attempts to remove the last remaining Admin, preventing orphaned
-//! contracts.
+//! [`AccessControl::revoke_role`] will panic with [`ContractError::InvalidOperation`] if
+//! the caller attempts to remove the last remaining Admin, preventing orphaned contracts.
 //!
 //! # Events
 //! Every role change emits an event so off-chain indexers can reconstruct the
@@ -60,7 +59,7 @@ pub enum Role {
 pub struct AdminTransfer {
     /// The current admin who proposed the transfer.
     pub from: Address,
-    /// The address that must call [`accept_admin`] to complete the transfer.
+    /// The address that must call [`AccessControl::accept_admin`] to complete the transfer.
     pub to: Address,
 }
 
@@ -80,175 +79,174 @@ enum DataKey {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Initialise access control for the calling contract.
-///
-/// Grants [`Role::Admin`] to `admin` and stores the initial admin count.
-/// Must be called exactly once; subsequent calls panic with
-/// [`ContractError::AlreadyInitialized`].
-///
-/// # Authorization
-/// `admin` must have authorised this invocation.
-pub fn initialize(env: &Env, admin: &Address) {
-    if env.storage().instance().has(&DataKey::AdminCount) {
-        panic_with_error!(env, ContractError::AlreadyInitialized);
-    }
+pub struct AccessControl;
 
-    admin.require_auth();
-
-    internal_set_role(env, admin, Role::Admin, true);
-    env.storage().instance().set(&DataKey::AdminCount, &1u32);
-
-    env.events()
-        .publish((symbol_short!("ac_init"), admin.clone()), Role::Admin);
-}
-
-/// Returns `true` if `account` currently holds `role`, `false` otherwise.
-pub fn has_role(env: &Env, account: &Address, role: Role) -> bool {
-    env.storage()
-        .instance()
-        .get::<DataKey, bool>(&DataKey::HasRole(account.clone(), role))
-        .unwrap_or(false)
-}
-
-/// Grant `role` to `grantee`.
-///
-/// # Authorization
-/// `grantor` must hold [`Role::Admin`] and must have authorised this call.
-///
-/// # Panics
-/// * [`ContractError::Unauthorized`] if `grantor` is not an Admin.
-pub fn grant_role(env: &Env, grantor: &Address, grantee: &Address, role: Role) {
-    grantor.require_auth();
-    require_role(env, grantor, Role::Admin);
-
-    // Only increment the admin counter when this is a *new* admin grant.
-    let already_has = has_role(env, grantee, role.clone());
-    internal_set_role(env, grantee, role.clone(), true);
-
-    if matches!(role, Role::Admin) && !already_has {
-        internal_inc_admin_count(env);
-    }
-
-    env.events().publish(
-        (symbol_short!("grant"), grantor.clone(), grantee.clone()),
-        role,
-    );
-}
-
-/// Revoke `role` from `target`.
-///
-/// # Authorization
-/// `revoker` must hold [`Role::Admin`] and must have authorised this call.
-///
-/// # Panics
-/// * [`ContractError::InvalidOperation`] when revoking Admin would leave zero
-///   admins (last-admin protection).
-/// * [`ContractError::Unauthorized`] if `revoker` is not an Admin.
-pub fn revoke_role(env: &Env, revoker: &Address, target: &Address, role: Role) {
-    revoker.require_auth();
-    require_role(env, revoker, Role::Admin);
-
-    if matches!(role, Role::Admin) {
-        let count = internal_admin_count(env);
-        if count <= 1 {
-            // Revoking the last admin would orphan the contract.
-            panic_with_error!(env, ContractError::InvalidOperation);
+impl AccessControl {
+    /// Initialise access control for the calling contract.
+    ///
+    /// Grants [`Role::Admin`] to `admin` and stores the initial admin count.
+    /// Must be called exactly once; subsequent calls panic with
+    /// [`ContractError::AlreadyInitialized`].
+    ///
+    /// # Authorization
+    /// `admin` must have authorised this invocation.
+    pub fn initialize(env: &Env, admin: &Address) {
+        if env.storage().instance().has(&DataKey::AdminCount) {
+            panic_with_error!(env, ContractError::AlreadyInitialized);
         }
+
+        admin.require_auth();
+
+        internal_set_role(env, admin, Role::Admin, true);
+        env.storage().instance().set(&DataKey::AdminCount, &1u32);
+
+        env.events()
+            .publish((symbol_short!("ac_init"), admin.clone()), Role::Admin);
+    }
+
+    /// Returns `true` if `account` currently holds `role`, `false` otherwise.
+    pub fn has_role(env: &Env, account: &Address, role: Role) -> bool {
+        env.storage()
+            .instance()
+            .get::<DataKey, bool>(&DataKey::HasRole(account.clone(), role))
+            .unwrap_or(false)
+    }
+
+    /// Grant `role` to `grantee`.
+    ///
+    /// # Authorization
+    /// `grantor` must hold [`Role::Admin`] and must have authorised this call.
+    ///
+    /// # Panics
+    /// * [`ContractError::Unauthorized`] if `grantor` is not an Admin.
+    pub fn grant_role(env: &Env, grantor: &Address, grantee: &Address, role: Role) {
+        grantor.require_auth();
+        Self::require_role(env, grantor, Role::Admin);
+
+        let already_has = Self::has_role(env, grantee, role.clone());
+        internal_set_role(env, grantee, role.clone(), true);
+
+        if matches!(role, Role::Admin) && !already_has {
+            internal_inc_admin_count(env);
+        }
+
+        env.events().publish(
+            (symbol_short!("grant"), grantor.clone(), grantee.clone()),
+            role,
+        );
+    }
+
+    /// Revoke `role` from `target`.
+    ///
+    /// # Authorization
+    /// `revoker` must hold [`Role::Admin`] and must have authorised this call.
+    ///
+    /// # Panics
+    /// * [`ContractError::InvalidOperation`] when revoking Admin would leave zero
+    ///   admins (last-admin protection).
+    /// * [`ContractError::Unauthorized`] if `revoker` is not an Admin.
+    pub fn revoke_role(env: &Env, revoker: &Address, target: &Address, role: Role) {
+        revoker.require_auth();
+        Self::require_role(env, revoker, Role::Admin);
+
+        if matches!(role, Role::Admin) {
+            let count = internal_admin_count(env);
+            if count <= 1 {
+                panic_with_error!(env, ContractError::InvalidOperation);
+            }
+            internal_dec_admin_count(env);
+        }
+
+        internal_set_role(env, target, role.clone(), false);
+
+        env.events().publish(
+            (symbol_short!("revoke"), revoker.clone(), target.clone()),
+            role,
+        );
+    }
+
+    /// Assert that `account` holds `role`.
+    ///
+    /// Panics with [`ContractError::Unauthorized`] when the check fails.
+    /// This is the primary guard used inside contract entrypoints.
+    pub fn require_role(env: &Env, account: &Address, role: Role) {
+        if !Self::has_role(env, account, role) {
+            panic_with_error!(env, ContractError::Unauthorized);
+        }
+    }
+
+    /// **Step 1** of a two-step admin transfer.
+    ///
+    /// Records `new_admin` as the pending successor.  The current admin retains
+    /// their role until `new_admin` calls [`Self::accept_admin`].
+    ///
+    /// # Authorization
+    /// `current_admin` must hold [`Role::Admin`] and must have authorised this call.
+    pub fn transfer_admin(env: &Env, current_admin: &Address, new_admin: &Address) {
+        current_admin.require_auth();
+        Self::require_role(env, current_admin, Role::Admin);
+
+        let proposal = AdminTransfer {
+            from: current_admin.clone(),
+            to: new_admin.clone(),
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingTransfer, &proposal);
+
+        env.events().publish(
+            (
+                symbol_short!("xfr_prop"),
+                current_admin.clone(),
+                new_admin.clone(),
+            ),
+            (),
+        );
+    }
+
+    /// **Step 2** of a two-step admin transfer.
+    ///
+    /// `new_admin` accepts the pending proposal: they are granted [`Role::Admin`]
+    /// and the proposing admin is atomically revoked.  The pending proposal is then
+    /// cleared.
+    ///
+    /// # Authorization
+    /// `new_admin` must have authorised this call and must match the address stored
+    /// by the preceding [`Self::transfer_admin`] call.
+    ///
+    /// # Panics
+    /// * [`ContractError::InvalidOperation`] if no transfer has been proposed.
+    /// * [`ContractError::Unauthorized`] if `new_admin` does not match the pending proposal.
+    pub fn accept_admin(env: &Env, new_admin: &Address) {
+        new_admin.require_auth();
+
+        let proposal: AdminTransfer = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingTransfer)
+            .unwrap_or_else(|| panic_with_error!(env, ContractError::InvalidOperation));
+
+        if proposal.to != *new_admin {
+            panic_with_error!(env, ContractError::Unauthorized);
+        }
+
+        let already_admin = Self::has_role(env, new_admin, Role::Admin);
+        internal_set_role(env, new_admin, Role::Admin, true);
+        if !already_admin {
+            internal_inc_admin_count(env);
+        }
+
+        // Revoke Admin from the proposer. Safe because count >= 2 at this point.
         internal_dec_admin_count(env);
+        internal_set_role(env, &proposal.from, Role::Admin, false);
+
+        env.storage().instance().remove(&DataKey::PendingTransfer);
+
+        env.events().publish(
+            (symbol_short!("xfr_acc"), new_admin.clone()),
+            proposal.from.clone(),
+        );
     }
-
-    internal_set_role(env, target, role.clone(), false);
-
-    env.events().publish(
-        (symbol_short!("revoke"), revoker.clone(), target.clone()),
-        role,
-    );
-}
-
-/// Assert that `account` holds `role`.
-///
-/// Panics with [`ContractError::Unauthorized`] when the check fails.
-/// This is the primary guard used inside contract entrypoints.
-pub fn require_role(env: &Env, account: &Address, role: Role) {
-    if !has_role(env, account, role) {
-        panic_with_error!(env, ContractError::Unauthorized);
-    }
-}
-
-/// **Step 1** of a two-step admin transfer.
-///
-/// Records `new_admin` as the pending successor.  The current admin retains
-/// their role until `new_admin` calls [`accept_admin`].
-///
-/// # Authorization
-/// `current_admin` must hold [`Role::Admin`] and must have authorised this call.
-pub fn transfer_admin(env: &Env, current_admin: &Address, new_admin: &Address) {
-    current_admin.require_auth();
-    require_role(env, current_admin, Role::Admin);
-
-    let proposal = AdminTransfer {
-        from: current_admin.clone(),
-        to: new_admin.clone(),
-    };
-    env.storage()
-        .instance()
-        .set(&DataKey::PendingTransfer, &proposal);
-
-    env.events().publish(
-        (
-            symbol_short!("xfr_prop"),
-            current_admin.clone(),
-            new_admin.clone(),
-        ),
-        (),
-    );
-}
-
-/// **Step 2** of a two-step admin transfer.
-///
-/// `new_admin` accepts the pending proposal: they are granted [`Role::Admin`]
-/// and the proposing admin is atomically revoked.  The pending proposal is then
-/// cleared.
-///
-/// # Authorization
-/// `new_admin` must have authorised this call and must match the address stored
-/// by the preceding [`transfer_admin`] call.
-///
-/// # Panics
-/// * [`ContractError::InvalidOperation`] if no transfer has been proposed.
-/// * [`ContractError::Unauthorized`] if `new_admin` does not match the
-///   pending proposal.
-pub fn accept_admin(env: &Env, new_admin: &Address) {
-    new_admin.require_auth();
-
-    let proposal: AdminTransfer = env
-        .storage()
-        .instance()
-        .get(&DataKey::PendingTransfer)
-        .unwrap_or_else(|| panic_with_error!(env, ContractError::InvalidOperation));
-
-    if proposal.to != *new_admin {
-        panic_with_error!(env, ContractError::Unauthorized);
-    }
-
-    // Grant Admin to the new admin (increment only if they didn't already hold it).
-    let already_admin = has_role(env, new_admin, Role::Admin);
-    internal_set_role(env, new_admin, Role::Admin, true);
-    if !already_admin {
-        internal_inc_admin_count(env);
-    }
-
-    // Revoke Admin from the proposer.  Safe because we just ensured count >= 2.
-    internal_dec_admin_count(env);
-    internal_set_role(env, &proposal.from, Role::Admin, false);
-
-    // Clear the pending proposal.
-    env.storage().instance().remove(&DataKey::PendingTransfer);
-
-    env.events().publish(
-        (symbol_short!("xfr_acc"), new_admin.clone()),
-        proposal.from.clone(),
-    );
 }
 
 // ---------------------------------------------------------------------------

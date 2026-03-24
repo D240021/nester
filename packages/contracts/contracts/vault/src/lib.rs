@@ -2,7 +2,7 @@
 
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env};
 
-use nester_access_control::{self as ac, Role};
+use nester_access_control::{AccessControl, Role};
 use nester_common::ContractError;
 
 // ---------------------------------------------------------------------------
@@ -28,7 +28,7 @@ impl VaultContract {
     ///
     /// Must be called once before any other function.
     pub fn initialize(env: Env, admin: Address) {
-        ac::initialize(&env, &admin);
+        AccessControl::initialize(&env, &admin);
         env.storage().instance().set(&DataKey::Paused, &false);
     }
 
@@ -39,7 +39,7 @@ impl VaultContract {
     /// Pause all vault operations. Requires [`Role::Admin`].
     pub fn pause(env: Env, caller: Address) {
         caller.require_auth();
-        ac::require_role(&env, &caller, Role::Admin);
+        AccessControl::require_role(&env, &caller, Role::Admin);
         env.storage().instance().set(&DataKey::Paused, &true);
         env.events().publish((symbol_short!("paused"), caller), ());
     }
@@ -47,7 +47,7 @@ impl VaultContract {
     /// Resume vault operations. Requires [`Role::Admin`].
     pub fn unpause(env: Env, caller: Address) {
         caller.require_auth();
-        ac::require_role(&env, &caller, Role::Admin);
+        AccessControl::require_role(&env, &caller, Role::Admin);
         env.storage().instance().set(&DataKey::Paused, &false);
         env.events()
             .publish((symbol_short!("unpaused"), caller), ());
@@ -55,22 +55,22 @@ impl VaultContract {
 
     /// Grant `role` to `grantee`. Requires caller to be an Admin.
     pub fn grant_role(env: Env, grantor: Address, grantee: Address, role: Role) {
-        ac::grant_role(&env, &grantor, &grantee, role);
+        AccessControl::grant_role(&env, &grantor, &grantee, role);
     }
 
     /// Revoke `role` from `target`. Requires caller to be an Admin.
     pub fn revoke_role(env: Env, revoker: Address, target: Address, role: Role) {
-        ac::revoke_role(&env, &revoker, &target, role);
+        AccessControl::revoke_role(&env, &revoker, &target, role);
     }
 
     /// Propose an admin transfer (step 1). Requires caller to be an Admin.
     pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) {
-        ac::transfer_admin(&env, &current_admin, &new_admin);
+        AccessControl::transfer_admin(&env, &current_admin, &new_admin);
     }
 
     /// Accept a proposed admin transfer (step 2). Caller must be the pending new admin.
     pub fn accept_admin(env: Env, new_admin: Address) {
-        ac::accept_admin(&env, &new_admin);
+        AccessControl::accept_admin(&env, &new_admin);
     }
 
     // -----------------------------------------------------------------------
