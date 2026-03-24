@@ -167,39 +167,3 @@ Follow existing patterns and conventions in the codebase. Write tests for new fu
 **Built by [Suncrest Labs](https://suncrestlabs.com)**
 
 *Nester is in active development. Features and specifications may change.*
-
----
-
-## Contributing
-
-### Pull Request Workflow (From Forks)
-
-When contributors submit PRs from their own forks, code reviewers must push fixes directly to the **contributor's fork branch**, not the main repository:
-
-**Correct Approach:**
-```bash
-# Add contributor's fork as remote
-git remote add contributor https://github.com/contributor-username/nester.git
-
-# Push fixes to their branch (updates the PR automatically)
-git push contributor branch-name
-```
-
-**Why:** PRs from forks track the contributor's branch, not the main repo. Pushing to `Suncrest-Labs/nester` won't update the PR if it originated from a fork. Always push to the source fork to reflect changes in the PR.
-
-**Example:**
-```bash
-# If PR #59 is from Tomi-whizzy/nester:feat/go-backend-foundations
-git remote add tomi https://github.com/Tomi-whizzy/nester.git
-git push tomi feat/go-backend-foundations
-# PR #59 now shows the updated commits
-```
-
----
-
-### Code Review Standards
-
-- **Only 0xDeon** can approve and merge PRs (enforced via CODEOWNERS)
-- All reviews must come from the 0xDeon account
-- Depo-dev and Damola have read-only access (cannot review)
-
