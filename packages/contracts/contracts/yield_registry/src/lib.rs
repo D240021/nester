@@ -174,7 +174,9 @@ impl YieldRegistryContract {
             panic_with_error!(&env, ContractError::StrategyNotFound);
         }
 
-        env.storage().instance().remove(&DataKey::Source(id.clone()));
+        env.storage()
+            .instance()
+            .remove(&DataKey::Source(id.clone()));
 
         let mut list = source_list(&env);
         let mut new_list = Vec::<Symbol>::new(&env);
