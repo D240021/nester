@@ -22,7 +22,7 @@ import {
     Vault as VaultIcon
 } from "lucide-react";
 import { mockTransactions, TransactionType } from "@/lib/mock-data";
-import { cn } from "@/lib/utils";
+import { cn, truncateAddress } from "@/lib/utils";
 import Link from "next/link";
 
 const TYPE_ICONS = {
@@ -338,7 +338,7 @@ export default function HistoryPage() {
                                                                     rel="noopener noreferrer"
                                                                     className="inline-flex items-center gap-1.5 text-xs text-primary hover:text-primary-foreground hover:bg-primary px-2 py-1 rounded-lg transition-all group/link"
                                                                 >
-                                                                    <span className="font-mono">{tx.txHash}</span>
+                                                                    <span className="font-mono">{truncateAddress(tx.txHash)}</span>
                                                                     <ExternalLink className="h-3 w-3 opacity-50 group-hover/link:opacity-100" />
                                                                 </a>
                                                             </td>
