@@ -1,7 +1,6 @@
 package stellar
 
 import (
-	"context"
 	"errors"
 	"testing"
 

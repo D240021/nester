@@ -32,6 +32,7 @@ func TestTransactionSubmission_Success(t *testing.T) {
 	// Currently returns error because tx is nil
 	assert.Error(t, err)
 	assert.Nil(t, result)
+	_ = invoker // Use the variable to avoid unused error
 }
 
 func TestTransactionSubmission_ReturnsHash(t *testing.T) {
@@ -68,6 +69,8 @@ func TestTransactionSubmission_NetworkTimeout(t *testing.T) {
 	err := errors.New("i/o timeout")
 	isRetryable := isRetryableError(err)
 	assert.True(t, isRetryable)
+	_ = invoker // Use the variable to avoid unused error
+	_ = ctx     // Use the variable to avoid unused error
 }
 
 func TestTransactionSubmission_ConnectionRefused(t *testing.T) {
@@ -197,6 +200,7 @@ func TestTransactionSubmission_ExponentialBackoff(t *testing.T) {
 	// Test that retry logic respects max retries
 	_, err := invoker.submitWithRetries(context.Background(), nil)
 	assert.Error(t, err)
+	_ = invoker // Use the variable to avoid unused error
 }
 
 func TestTransactionSubmission_ContextCancellation(t *testing.T) {
