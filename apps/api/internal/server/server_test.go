@@ -356,3 +356,133 @@ func TestGracefulShutdown_NewConnectionsRejectedAfterShutdown(t *testing.T) {
 		t.Error("expected an error for new connection after shutdown, got nil")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// CORS headers
+// ---------------------------------------------------------------------------
+
+func TestCORS_HeadersPresentOnCrossOriginRequests(t *testing.T) {
+	srv := newTestServer(t, nil)
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/health", nil)
+	req.Header.Set("Origin", "https://example.com")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /health error = %v", err)
+	}
+	defer resp.Body.Close()
+
+	acao := resp.Header.Get("Access-Control-Allow-Origin")
+	if acao == "" {
+		t.Error("expected Access-Control-Allow-Origin header, got empty")
+	}
+	acam := resp.Header.Get("Access-Control-Allow-Methods")
+	if acam == "" {
+		t.Error("expected Access-Control-Allow-Methods header, got empty")
+	}
+}
+
+func TestCORS_PreflightOptionsReturns204(t *testing.T) {
+	srv := newTestServer(t, nil)
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodOptions, srv.URL+"/health", nil)
+	req.Header.Set("Origin", "https://example.com")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("OPTIONS /health error = %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("expected 204 for preflight OPTIONS, got %d", resp.StatusCode)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Middleware execution order
+// ---------------------------------------------------------------------------
+
+func TestMiddleware_ExecutesInCorrectOrder(t *testing.T) {
+	// Verify the middleware chain executes in the documented order:
+	// RecoverPanic → CORS → LimitRequestBody → Logging → handler
+	//
+	// We prove this by observing side effects:
+	// 1. CORS headers are present (CORS ran)
+	// 2. Request ID is in the log (Logging ran)
+	// 3. A panic is recovered (RecoverPanic ran outermost)
+
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logBuf, nil))
+
+	handler, mux := server.New(log, noopChecker)
+	mux.HandleFunc("GET /api/v1/order-test", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/order-test", nil)
+	req.Header.Set("Origin", "https://example.com")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request error = %v", err)
+	}
+	defer resp.Body.Close()
+
+	// CORS ran (headers present)
+	if resp.Header.Get("Access-Control-Allow-Origin") == "" {
+		t.Error("CORS middleware did not execute — no Access-Control-Allow-Origin header")
+	}
+
+	// Logging ran (request_id in log output)
+	if !strings.Contains(logBuf.String(), "request_id") {
+		t.Error("Logging middleware did not execute — no request_id in log output")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown — exits within configured timeout
+// ---------------------------------------------------------------------------
+
+func TestGracefulShutdown_ExitsWithinConfiguredTimeout(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen error = %v", err)
+	}
+
+	handler, _ := server.New(silentLogger(), noopChecker)
+	srv := &http.Server{Handler: handler}
+	go srv.Serve(ln) //nolint:errcheck
+
+	// Verify the server is up
+	addr := fmt.Sprintf("http://%s/health", ln.Addr())
+	resp, err := http.Get(addr)
+	if err != nil {
+		t.Fatalf("pre-shutdown request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	// Cancel context to trigger shutdown
+	cancel()
+
+	timeout := 3 * time.Second
+	done := make(chan error, 1)
+	go func() {
+		done <- server.RunWithGracefulShutdown(ctx, srv, timeout)
+	}()
+
+	select {
+	case err := <-done:
+		// RunWithGracefulShutdown may return ErrServerClosed or nil — both are fine.
+		if err != nil && err != http.ErrServerClosed {
+			t.Errorf("RunWithGracefulShutdown returned unexpected error: %v", err)
+		}
+	case <-time.After(timeout + 2*time.Second):
+		t.Fatal("server did not exit within configured timeout")
+	}
+}

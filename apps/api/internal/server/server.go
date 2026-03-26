@@ -27,10 +27,12 @@ func New(logger *slog.Logger, checker HealthChecker) (http.Handler, *http.ServeM
 	mux.HandleFunc("GET /healthz", healthHandler(checker))
 
 	// Build the middleware stack (outermost first):
-	// RecoverPanic → LimitRequestBody → Logging → mux
+	// RecoverPanic → CORS → LimitRequestBody → Logging → mux
 	handler := middleware.RecoverPanic(logger)(
-		middleware.LimitRequestBody(defaultMaxBodyBytes)(
-			middleware.Logging(logger)(mux),
+		middleware.CORS(
+			middleware.LimitRequestBody(defaultMaxBodyBytes)(
+				middleware.Logging(logger)(mux),
+			),
 		),
 	)
 	return handler, mux
