@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/shopspring/decimal"
+	"github.com/stellar/go-stellar-sdk/clients/horizonclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,7 +48,9 @@ func TestGetAccountBalance_ReturnsCorrectBalance(t *testing.T) {
 		config: Config{
 			RPCURL: server.URL,
 		},
-		horizon: &http.Client{},
+		horizon: &horizonclient.Client{
+			HorizonURL: server.URL,
+		},
 	}
 
 	// Test GetVaultBalance
@@ -77,7 +80,9 @@ func TestGetAccountBalance_AccountNotFound(t *testing.T) {
 		config: Config{
 			RPCURL: server.URL,
 		},
-		horizon: &http.Client{},
+		horizon: &horizonclient.Client{
+			HorizonURL: server.URL,
+		},
 	}
 
 	reader := NewVaultReader(NewContractInvoker(client))
@@ -99,7 +104,9 @@ func TestGetAccountBalance_NetworkError(t *testing.T) {
 		config: Config{
 			RPCURL: server.URL,
 		},
-		horizon: &http.Client{},
+		horizon: &horizonclient.Client{
+			HorizonURL: server.URL,
+		},
 	}
 
 	reader := NewVaultReader(NewContractInvoker(client))

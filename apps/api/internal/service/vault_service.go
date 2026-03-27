@@ -74,7 +74,35 @@ func (s *VaultService) GetUserVaults(ctx context.Context, userID uuid.UUID) ([]v
 	if userID == uuid.Nil {
 		return nil, vault.ErrInvalidVault
 	}
-	return s.repository.GetUserVaults(ctx, userID)
+	vaults, err := s.repository.GetUserVaults(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Sort vaults by APY descending
+	for i := 0; i < len(vaults); i++ {
+		for j := i + 1; j < len(vaults); j++ {
+			// Get max APY for each vault
+			maxAPYI := decimal.Zero
+			for _, alloc := range vaults[i].Allocations {
+				if alloc.APY.GreaterThan(maxAPYI) {
+					maxAPYI = alloc.APY
+				}
+			}
+			maxAPYJ := decimal.Zero
+			for _, alloc := range vaults[j].Allocations {
+				if alloc.APY.GreaterThan(maxAPYJ) {
+					maxAPYJ = alloc.APY
+				}
+			}
+			// Swap if j has higher APY
+			if maxAPYJ.GreaterThan(maxAPYI) {
+				vaults[i], vaults[j] = vaults[j], vaults[i]
+			}
+		}
+	}
+
+	return vaults, nil
 }
 
 func (s *VaultService) RecordDeposit(ctx context.Context, input RecordDepositInput) (vault.Vault, error) {
